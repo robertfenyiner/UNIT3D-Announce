@@ -83,6 +83,8 @@ pub enum AnnounceError {
     GroupNotEnabled(String),
     #[error("You already have {0} peers on this torrent. Ignoring.")]
     PeersPerTorrentPerUserLimit(u16),
+    #[error("Tu proveedor de Internet/hosting (AS{0} - {1}) ha sido bloqueado. Si crees que esto es un error, contacta al staff por Discord.")]
+    BlockedAsn(u32, String),
 }
 
 impl IntoResponse for AnnounceError {
