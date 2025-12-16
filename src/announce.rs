@@ -19,7 +19,7 @@ use tokio::net::TcpStream;
 
 use crate::{
     error::AnnounceError::{
-        self, AbnormalAccess, BlacklistedClient, BlacklistedPort, DownloadPrivilegesRevoked,
+        self, AbnormalAccess, BlockedAsn, BlacklistedClient, BlacklistedPort, DownloadPrivilegesRevoked,
         GroupNotEnabled, GroupNotFound, InfoHashNotFound, InternalTrackerError, InvalidCompact,
         InvalidDownloaded, InvalidInfoHash, InvalidLeft, InvalidNumwant, InvalidPasskey,
         InvalidPeerId, InvalidPort, InvalidQueryStringKey, InvalidQueryStringValue,
@@ -308,6 +308,14 @@ pub async fn announce(
     // Some clients send port 0 on the stopped event
     if tracker.port_blacklist.read().contains(&queries.port) && queries.event != Event::Stopped {
         return Err(BlacklistedPort(queries.port));
+    }
+
+    // Check if IP's ASN is blocked
+    if let Ok(Some((asn, org))) = tracker::blocked_asn::get_asn_for_ip(&tracker.pool, client_ip).await {
+        let blocked_asns = tracker.blocked_asns.read();
+        if blocked_asns.contains_key(&asn) {
+            return Err(BlockedAsn(asn, org));
+        }
     }
 
     let passkey: Passkey = Passkey::from_str(&passkey).or(Err(InvalidPasskey))?;

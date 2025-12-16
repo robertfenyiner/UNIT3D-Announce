@@ -1,5 +1,6 @@
 pub mod blacklisted_agent;
 pub mod blacklisted_port;
+pub mod blocked_asn;
 pub mod connectable_port;
 pub mod featured_torrent;
 pub mod freeleech_token;
@@ -36,6 +37,7 @@ use std::{env, sync::Arc, time::Duration};
 pub struct Tracker {
     pub agent_blacklist: RwLock<blacklisted_agent::Set>,
     pub announce_updates: Mutex<announce_update::Queue>,
+    pub blocked_asns: RwLock<blocked_asn::Map>,
     pub config: RwLock<config::Config>,
     pub connectable_ports: RwLock<connectable_port::Map>,
     pub featured_torrents: RwLock<featured_torrent::Set>,
@@ -133,10 +135,15 @@ impl Tracker {
         let featured_torrents = featured_torrent::Set::from_db(&pool).await?;
         println!("[Finished] Records: {:?}", featured_torrents.len());
 
-        print!("Starting to load 11/11: groups                         ... ");
+        print!("Starting to load 11/12: groups                         ... ");
         io::stdout().flush().unwrap();
         let groups = group::Map::from_db(&pool).await?;
         println!("[Finished] Records: {:?}", groups.len());
+
+        print!("Starting to load 12/12: blocked ASNs                   ... ");
+        io::stdout().flush().unwrap();
+        let blocked_asns = blocked_asn::from_db(&pool).await?;
+        println!("[Finished] Records: {:?}", blocked_asns.len());
 
         println!("All entities loaded into memory.");
 
@@ -145,6 +152,7 @@ impl Tracker {
         Ok(Arc::new(Tracker {
             agent_blacklist: RwLock::new(agent_blacklist),
             announce_updates: Mutex::new(announce_update::Queue::new()),
+            blocked_asns: RwLock::new(blocked_asns),
             config: RwLock::new(config),
             connectable_ports: RwLock::new(connectable_ports),
             freeleech_tokens: RwLock::new(freeleech_tokens),

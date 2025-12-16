@@ -57,6 +57,11 @@ pub fn routes(state: Arc<Tracker>) -> Router<Arc<Tracker>> {
                             put(tracker::featured_torrent::Set::upsert)
                                 .delete(tracker::featured_torrent::Set::destroy),
                         )
+                        .route(
+                            "/blocked-asns",
+                            put(tracker::blocked_asn::upsert)
+                                .delete(tracker::blocked_asn::destroy),
+                        )
                         .route("/stats", get(crate::stats::show))
                         .route("/config/reload", post(Config::reload)),
                 ),
