@@ -16,31 +16,53 @@ use tokio::{join, time::Instant};
 use torrent_update::{Index, TorrentUpdate};
 use tracing::info;
 
-pub async fn handle(tracker: &Arc<Tracker>) {
+pub async fn handle(tracker: &Arc<Tracker>, mut shutdown: tokio::sync::watch::Receiver<bool>) {
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(1));
     let mut counter = 0_u64;
 
     loop {
-        interval.tick().await;
-        counter += 1;
+        tokio::select! {
+            _ = interval.tick() => {
+                counter += 1;
 
-        if counter % tracker.config.read().flush_interval_milliseconds == 0 {
-            flush(tracker).await;
-        }
+                if counter % tracker.config.read().flush_interval_milliseconds == 0 {
+                    flush(tracker).await;
+                }
 
-        if counter % (tracker.config.read().peer_expiry_interval * 1000) == 0 {
-            reap(tracker).await;
+                if counter % (tracker.config.read().peer_expiry_interval * 1000) == 0 {
+                    reap(tracker).await;
+                }
+            }
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
         }
     }
 }
 
+/// Includes all six queues persisted by flush(). Call only after the scheduler stopped.
+pub fn has_pending_updates(tracker: &Arc<Tracker>) -> bool {
+    !tracker.announce_updates.lock().is_empty()
+        || tracker.history_updates.lock().is_not_empty()
+        || tracker.peer_updates.lock().is_not_empty()
+        || tracker.torrent_updates.lock().is_not_empty()
+        || tracker.user_updates.lock().is_not_empty()
+        || tracker.unregistered_info_hash_updates.lock().is_not_empty()
+}
+
 /// Send queued updates to mysql database
 pub async fn flush(tracker: &Arc<Tracker>) {
+    // Persist the parent torrent rows before peers and histories acquire
+    // foreign-key locks on those same rows. This removes an internal
+    // parent/child lock-order inversion observed in InnoDB deadlocks.
+    tracker.torrent_updates.flush(tracker, "torrents").await;
+
     join!(
         flush_announce_updates(tracker),
         tracker.history_updates.flush(tracker, "histories"),
         tracker.peer_updates.flush(tracker, "peers"),
-        tracker.torrent_updates.flush(tracker, "torrents"),
         tracker.user_updates.flush(tracker, "users"),
         tracker
             .unregistered_info_hash_updates

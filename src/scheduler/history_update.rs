@@ -117,11 +117,11 @@ impl Flushable<HistoryUpdate> for super::Batch<Index, HistoryUpdate> {
             .push_bind(tracker.config.read().active_peer_ttl + tracker.config.read().peer_expiry_interval)
             .push(
                 r#"
-                                                                SECOND) > VALUES(updated_at) AND seeder = 1 AND active = 1 AND VALUES(seeder) = 1,
+                                                                SECOND) > VALUES(updated_at) AND deleted_at IS NULL AND VALUES(updated_at) >= updated_at AND seeder = 1 AND active = 1 AND VALUES(seeder) = 1,
                             seedtime + TIMESTAMPDIFF(second, updated_at, VALUES(updated_at)),
                             seedtime
                         ),
-                        updated_at = VALUES(updated_at),
+                        updated_at = GREATEST(updated_at, VALUES(updated_at)),
                         seeder = VALUES(seeder),
                         active = VALUES(active),
                         immune = immune AND VALUES(immune),

@@ -8,7 +8,7 @@
         "name": "id: u32",
         "type_info": {
           "type": "Long",
-          "flags": "NOT_NULL | PRIMARY_KEY | MULTIPLE_KEY | UNSIGNED | AUTO_INCREMENT",
+          "flags": "NOT_NULL | PRIMARY_KEY | UNSIGNED | AUTO_INCREMENT",
           "max_size": 10
         }
       },
@@ -17,7 +17,7 @@
         "name": "status: Status",
         "type_info": {
           "type": "Short",
-          "flags": "NOT_NULL",
+          "flags": "NOT_NULL | MULTIPLE_KEY",
           "max_size": 6
         }
       },
@@ -26,7 +26,7 @@
         "name": "seeders: u32",
         "type_info": {
           "type": "Long",
-          "flags": "NOT_NULL",
+          "flags": "NOT_NULL | MULTIPLE_KEY",
           "max_size": 11
         }
       },
@@ -35,7 +35,7 @@
         "name": "leechers: u32",
         "type_info": {
           "type": "Long",
-          "flags": "NOT_NULL",
+          "flags": "NOT_NULL | MULTIPLE_KEY",
           "max_size": 11
         }
       },

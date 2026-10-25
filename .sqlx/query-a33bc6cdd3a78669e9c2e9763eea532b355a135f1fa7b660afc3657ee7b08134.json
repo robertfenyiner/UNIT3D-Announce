@@ -1,0 +1,34 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT asn, organization FROM ip_asn_cache WHERE ip_address = ? AND asn IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "asn",
+        "type_info": {
+          "type": "Long",
+          "flags": "MULTIPLE_KEY | UNSIGNED",
+          "max_size": 10
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "organization",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "max_size": 1020
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "a33bc6cdd3a78669e9c2e9763eea532b355a135f1fa7b660afc3657ee7b08134"
+}

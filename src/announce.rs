@@ -19,15 +19,15 @@ use tokio::net::TcpStream;
 
 use crate::{
     error::AnnounceError::{
-        self, AbnormalAccess, BlacklistedClient, BlacklistedPort, DownloadPrivilegesRevoked,
-        GroupNotEnabled, GroupNotFound, InfoHashNotFound, InternalTrackerError, InvalidCompact,
-        InvalidDownloaded, InvalidInfoHash, InvalidLeft, InvalidNumwant, InvalidPasskey,
-        InvalidPeerId, InvalidPort, InvalidQueryStringKey, InvalidQueryStringValue,
-        InvalidUploaded, InvalidUserAgent, MissingDownloaded, MissingInfoHash, MissingLeft,
-        MissingPeerId, MissingPort, MissingUploaded, NotAClient, PasskeyNotFound,
-        PeersPerTorrentPerUserLimit, StoppedPeerDoesNotExist, TorrentIsDeleted,
-        TorrentIsPendingModeration, TorrentIsPostponed, TorrentIsRejected, TorrentNotFound,
-        TorrentUnknownModerationStatus, UnsupportedEvent, UserAgentTooLong, UserNotFound,
+        self, AbnormalAccess, BlacklistedClient, BlacklistedPort, BlockedAsn,
+        DownloadPrivilegesRevoked, GroupNotEnabled, GroupNotFound, InfoHashNotFound,
+        InternalTrackerError, InvalidCompact, InvalidDownloaded, InvalidInfoHash, InvalidLeft,
+        InvalidNumwant, InvalidPasskey, InvalidPeerId, InvalidPort, InvalidQueryStringKey,
+        InvalidQueryStringValue, InvalidUploaded, InvalidUserAgent, MissingDownloaded,
+        MissingInfoHash, MissingLeft, MissingPeerId, MissingPort, MissingUploaded, NotAClient,
+        PasskeyNotFound, PeersPerTorrentPerUserLimit, TorrentIsDeleted, TorrentIsPendingModeration,
+        TorrentIsPostponed, TorrentIsRejected, TorrentNotFound, TorrentUnknownModerationStatus,
+        UnsupportedEvent, UserAgentTooLong, UserNotFound,
     },
     scheduler::{
         announce_update::AnnounceUpdate,
@@ -310,6 +310,9 @@ pub async fn announce(
         return Err(BlacklistedPort(queries.port));
     }
 
+    // ASN blocking is intentionally disabled. The database tables and in-memory
+    // list are preserved so this production change remains fully reversible.
+
     let passkey: Passkey = Passkey::from_str(&passkey).or(Err(InvalidPasskey))?;
 
     // Validate passkey
@@ -383,6 +386,7 @@ pub async fn announce(
         group,
         has_requested_seed_list,
         has_requested_leech_list,
+        should_early_return,
         response,
     ) = {
         let mut torrent_guard = tracker.torrents.lock();
@@ -449,8 +453,16 @@ pub async fn announce(
             if let Some(peer) = removed_peer {
                 // Calculate change in upload and download compared to previous
                 // announce
-                uploaded_delta = queries.uploaded.saturating_sub(peer.uploaded);
-                downloaded_delta = queries.downloaded.saturating_sub(peer.downloaded);
+                // Cap the maximum creditable bytes per announce to ~1.25 TB
+                // This corresponds to a 5 Gbps connection for ~33 minutes, preventing fake client ratio spoofing.
+                uploaded_delta = queries
+                    .uploaded
+                    .saturating_sub(peer.uploaded)
+                    .min(1_250_000_000_000);
+                downloaded_delta = queries
+                    .downloaded
+                    .saturating_sub(peer.downloaded)
+                    .min(1_250_000_000_000);
 
                 leecher_delta = 0 - peer.is_included_in_leech_list(&config) as i32;
                 seeder_delta = 0 - peer.is_included_in_seed_list(&config) as i32;
@@ -463,10 +475,21 @@ pub async fn announce(
                     }
                 }
             } else {
-                // Short circuit response for stopped peer doesn't exist error
-                // since we can't do anything with it and don't want to update
-                // any data.
-                return Err(StoppedPeerDoesNotExist);
+                // Some clients (namely transmission) will keep sending
+                // `stopped` events until a successful announce is received.
+                // If a user's network is having issues, their peer might be
+                // deleted for inactivity from missed announces. If their peer
+                // isn't found when we receive a `stopped` event from them
+                // after regaining network connectivity, we can't return an
+                // error otherwise the client might enter into an infinite loop
+                // of sending `stopped` events. To prevent this, we need to
+                // send a warning (i.e. succcessful announce) instead, so that
+                // the client can successfully restart its session.
+                warnings.add(AnnounceWarning::StoppedPeerDoesntExist);
+                leecher_delta = 0;
+                seeder_delta = 0;
+                uploaded_delta = 0;
+                downloaded_delta = 0;
             }
 
             times_completed_delta = 0;
@@ -490,8 +513,6 @@ pub async fn announce(
                     peer.is_visible =
                         peer.is_included_in_leech_list(&config) || !has_hit_download_slot_limit;
                     peer.is_active = true;
-                    peer.has_sent_completed =
-                        peer.has_sent_completed || queries.event == Event::Completed;
                     peer.updated_at = now;
                     peer.uploaded = queries.uploaded;
                     peer.downloaded = queries.downloaded;
@@ -503,7 +524,6 @@ pub async fn announce(
                     is_active: true,
                     is_visible: !has_hit_download_slot_limit,
                     is_connectable,
-                    has_sent_completed: queries.event == Event::Completed,
                     updated_at: now,
                     uploaded: queries.uploaded,
                     downloaded: queries.downloaded,
@@ -536,19 +556,20 @@ pub async fn announce(
                         uploaded_delta = 0;
                         downloaded_delta = 0;
                     } else {
-                        // Assume client continues previously tracked session
-                        uploaded_delta = queries.uploaded - old_peer.uploaded;
-                        downloaded_delta = queries.downloaded - old_peer.downloaded;
+                        // Assume client continues previously tracked session.
+                        // Cap the maximum creditable bytes per announce to ~1.25 TB (5 Gbps for 33 min).
+                        uploaded_delta =
+                            (queries.uploaded - old_peer.uploaded).min(1_250_000_000_000);
+                        downloaded_delta =
+                            (queries.downloaded - old_peer.downloaded).min(1_250_000_000_000);
                     }
 
                     // Warn user if peer last announced less than
-                    // announce_min_enforced seconds ago and it's
-                    // not their first completed event
+                    // announce_min_enforced seconds ago
                     if old_peer
                         .updated_at
                         .checked_add_signed(Duration::seconds(config.announce_min_enforced.into()))
                         .is_some_and(|blocked_until| blocked_until > now)
-                        && (queries.event != Event::Completed || old_peer.has_sent_completed)
                     {
                         warnings.add(AnnounceWarning::RateLimitExceeded);
                     }
@@ -587,6 +608,9 @@ pub async fn announce(
                 }
             }
         }
+
+        // Compute this before we convert the warnings into a message.
+        let should_early_return = warnings.should_early_return();
 
         // Has to be adjusted before the peer list is generated
         torrent.seeders = torrent.seeders.saturating_add_signed(seeder_delta);
@@ -786,9 +810,16 @@ pub async fn announce(
             group,
             has_requested_seed_list,
             has_requested_leech_list,
+            should_early_return,
             response,
         )
     };
+
+    // Short circuit response for stopped peer doesn't exist error since we
+    // can't do anything with it and don't want to update any data.
+    if should_early_return {
+        return Ok(response);
+    }
 
     let download_factor = if tracker
         .personal_freeleeches

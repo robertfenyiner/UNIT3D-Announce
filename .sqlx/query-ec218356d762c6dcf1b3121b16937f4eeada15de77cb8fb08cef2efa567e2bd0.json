@@ -1,0 +1,34 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT asn, organization FROM blocked_asns",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "asn",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | UNIQUE_KEY | MULTIPLE_KEY | UNSIGNED | NO_DEFAULT_VALUE",
+          "max_size": 10
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "organization",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "max_size": 1020
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "ec218356d762c6dcf1b3121b16937f4eeada15de77cb8fb08cef2efa567e2bd0"
+}

@@ -48,11 +48,12 @@ async fn main() -> Result<()> {
 
     // Starts scheduler to automate flushing updates
     // to database and inactive peer removal.
-    let _handle = tokio::spawn({
+    let (scheduler_shutdown_tx, scheduler_shutdown_rx) = tokio::sync::watch::channel(false);
+    let scheduler_handle = tokio::spawn({
         let tracker = tracker.clone();
 
         async move {
-            scheduler::handle(&tracker).await;
+            scheduler::handle(&tracker, scheduler_shutdown_rx).await;
         }
     });
 
@@ -98,25 +99,27 @@ async fn main() -> Result<()> {
         bail!("Listener not configured.");
     }
 
-    // Flush all remaining updates before shutting down.
+    // Stop the periodic scheduler first and wait for any in-flight database flush.
+    // The HTTP server has already stopped accepting requests and awaited active ones.
+    scheduler_shutdown_tx
+        .send(true)
+        .context("Failed to request scheduler shutdown")?;
+    scheduler_handle
+        .await
+        .context("Scheduler task failed during shutdown")?;
+
+    // Flush every queue until empty. No scheduler task can remove batches concurrently.
     let max_flushes = 1000;
     let mut flushes = 0;
-
-    while flushes < max_flushes
-        && (tracker.history_updates.lock().is_not_empty()
-            || tracker.peer_updates.lock().is_not_empty()
-            || tracker.torrent_updates.lock().is_not_empty()
-            || tracker.user_updates.lock().is_not_empty())
-    {
+    while flushes < max_flushes && scheduler::has_pending_updates(&tracker) {
         scheduler::flush(&tracker).await;
         flushes += 1;
     }
 
-    if flushes == max_flushes {
-        println!("Graceful shutdown failed");
-    } else {
-        println!("Graceful shutdown succeeded")
+    if scheduler::has_pending_updates(&tracker) {
+        bail!("Graceful shutdown failed: updates remain after {max_flushes} flushes");
     }
+    println!("Graceful shutdown succeeded after {flushes} final flushes");
 
     Ok(())
 }
