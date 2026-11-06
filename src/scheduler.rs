@@ -78,6 +78,10 @@ async fn flush_announce_updates(tracker: &Arc<Tracker>) {
     let result = announce_update_batch.flush_to_db(tracker).await;
     let elapsed = start.elapsed().as_millis();
 
+    tracker
+        .stats
+        .record_queue_batch("announces", len, elapsed as u64, result.is_ok());
+
     match result {
         Ok(_) => {
             info!("Upserted {len} announces in {elapsed} ms.");
@@ -94,6 +98,7 @@ async fn flush_announce_updates(tracker: &Arc<Tracker>) {
 
 /// Remove peers that have not announced for some time
 pub async fn reap(tracker: &Arc<Tracker>) {
+    let started = Instant::now();
     let ttl = Duration::seconds(tracker.config.read().active_peer_ttl.try_into().unwrap());
     let active_cutoff = Utc::now().checked_sub_signed(ttl).unwrap();
     let ttl = Duration::seconds(tracker.config.read().inactive_peer_ttl.try_into().unwrap());
@@ -154,6 +159,9 @@ pub async fn reap(tracker: &Arc<Tracker>) {
             );
         }
     }
+    tracker
+        .stats
+        .record_peer_expiry(started.elapsed().as_millis() as u64);
 }
 
 pub struct Queue<K, V> {
@@ -273,6 +281,9 @@ where
         let results = join_all(tasks).await;
 
         for (len, elapsed, result, batch) in results {
+            tracker
+                .stats
+                .record_queue_batch(record_type, len, elapsed as u64, result.is_ok());
             match result {
                 Ok(_) => {
                     info!("Upserted {len} {record_type} in {elapsed} ms.");

@@ -184,6 +184,27 @@ To reload the configuration without restarting the tracker, send the following c
 curl -X POST "http://<LISTENING_IP_ADDRESS>:<LISTENING_PORT>/announce/<APIKEY>/config/reload"
 ```
 
+### Operational statistics
+
+The existing authenticated `GET /announce/<APIKEY>/stats` response includes
+request rates and additive, process-local diagnostics:
+
+- `request_completed_total` counts completed HTTP handlers since startup.
+- `request_duration_ms_bucket_bounds` is `[25, 50, 100, 250, 500, 1000, 2500]`.
+  The eight corresponding `request_duration_ms_buckets` count requests in
+  exclusive ranges, ending with requests above 2500 ms. Divide a change in a
+  counter by the elapsed time to calculate a rate.
+- `queue_metrics` reports successful and failed batch attempts, record
+  attempts, and the last, maximum, and cumulative database write duration in
+  milliseconds for each of the six queues. Failed records are retried, so
+  attempt counters are not distinct record counts.
+- `peer_expiry_runs`, `peer_expiry_last_ms`, and `peer_expiry_max_ms` track the
+  periodic in-memory peer expiration pass.
+
+These counters reset when the tracker restarts. The statistics contain no
+request paths, passkeys, peer identifiers, IP addresses, or user identifiers.
+Keep the API key private and query the endpoint through the local listener.
+
 ## Uninstall
 
 To uninstall UNIT3D-announce, you need to [exit the tracker](#exiting-unit3d-announce) and then:
